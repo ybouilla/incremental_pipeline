@@ -78,7 +78,6 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
     )
 
     initial_state["id"] = -1
-
     changed_index = changed_clean.set_index(["license_id", "date"]).index
     initial_state = initial_state[
         ~initial_state.set_index(["license_id", "date"]).index.isin(changed_index)
@@ -143,7 +142,7 @@ def build_full_daily_states(states, created_csv):
     full_grid = full_grid[full_grid["date"] >= full_grid["creation_date"]]
 
     # -------------------------
-    # 4. Clean state events
+    # 4. Clean state events (not sure it is very useful)
     # -------------------------
     states = states.sort_values(["license_id", "date", "id"])
     states = states.drop_duplicates(["license_id", "date"], keep="last")
@@ -159,11 +158,7 @@ def build_full_daily_states(states, created_csv):
         .ffill()
     )
 
-    full[["renewable", "type", "price"]] = (
-        full.groupby("license_id")[["renewable", "type", "price"]]
-        .ffill()
-        # .bfill()   
-    )
+
     return full, all_dates
 # -------------------------
 # 3. State transitions

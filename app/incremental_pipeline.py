@@ -269,7 +269,7 @@ def run_backfill_pipeline(inital_license_file: str, changed_license_file: str,
     -------
     None
     """
-    """Runs backfill for data coming very late"""
+
     now = datetime.now(timezone.utc)
 
     start_ts = now - timedelta(days=days)

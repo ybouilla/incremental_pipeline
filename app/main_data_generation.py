@@ -20,14 +20,11 @@ folder_name = "csv"
 nb_id: int = 100 # number of license_id
 nb_modif: int = 10_000
 
-# nb_customer_ids: int = 20  # number of different customers
-# prop_customer_1_license = .4 # proportion of customers having only one license
-# prop_customer_2_licenses = .4 # proportion of customers having 2 licenses
 
 
 min_param_date: str = '2023-01-01'
 prop_contract_created_Q1: float = 0.5
-# prop_contract_created_across_years: tuple = (3, .3, .3, .1,)
+
 
 max_price = 5000
 # let 's assume there are 3 different subscription prices:
@@ -91,7 +88,6 @@ def generate_data(nb_id: int =nb_id,
     license_id = np.arange(1, nb_id+1)
     start = np.datetime64(min_param_date)
     dates = generate_creation_dates(nb_id, start, q1_ratio=prop_contract_created_Q1)
-    # prices = generate_subscription(subscription_prices, subscription_prob, nb_id)
     types = generate_type_licenses(type_license_available, type_prob_distr, nb_id)
     prices = np.array([mapping_price_type[t] for t in types])  # associate each price to a given sbscription
     customer_id = generate_pareto(license_id, total_size=nb_id, alpha=1.5)
@@ -123,7 +119,7 @@ def generate_data(nb_id: int =nb_id,
     for k,v in license_changed_mapped.items():
         idx = np.argwhere(init_licenses["id"] ==k)
         start_d = init_licenses["creation_date"][idx]
-        # import pdb; pdb.set_trace()
+
         dates[k] = generate_dates(start_d[0][0], v)
         t, r = simulate_markov_single(dates[k], init_licenses["type"][int(idx[0][0])], transition_matrix,
                                     np.array(["PASS", "SUPERVISION", "SIM", "RENEW_PASS", "RENEW_SUPERVISION", "RENEW_SIM",]))

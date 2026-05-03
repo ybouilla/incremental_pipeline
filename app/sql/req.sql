@@ -36,7 +36,7 @@ filtered_initial AS (
     SELECT *
     FROM initial_state i
     WHERE NOT EXISTS (
-        SELECT 1
+        SELECT id
         FROM changed_clean c
         WHERE c.license_id = i.license_id
           AND date(c.date) = i.date

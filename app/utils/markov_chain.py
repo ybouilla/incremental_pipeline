@@ -65,28 +65,3 @@ def simulate_markov_single(dates: Sequence, initial_state: str, transition_matri
 
 
 
-    # for t in range(k):
-    #     if not renew_flag[t]:
-    #         last_valid = labeled_states[t]
-    #     main_states[t] = last_valid
-
-    
-    # trajectory = np.array(
-    #     list(zip(dates, labeled_states)),
-    #     dtype=[("date", "datetime64[D]"), ("state", "U20")]
-    # )
-
-    return main_states, renew_flag
-
-# transition_matrix = np.array([[.2, .6, .1, .1, .0, .0  ],# type:PASS
-#                               [.1, .5, .2, .0, .2, .0],#type: SUPERVISION
-#                               [.3, .3, .3, .0, .0, .1], # type: SIM
-#                               [1., .0, .0, .0,.0 , .0, ], # type : renew_pass
-#                               [.0, 1., .0, .0 ,.0, .0, ], # type: renew_supervision
-#                               [.0, .0, 1., .0, .0, .0] # type: renew sim
-#                               ])
-
-# state_labels = np.array(["PASS", "SUPERVISION", "SIM", "RENEW_PASS", "RENEW_SUPERVISION", "RENEW_SIM",])
-# dates = list(range(1,6000))
-
-# print(simulate_markov_single(dates, 0, transition_matrix, state_labels, ))
