@@ -38,7 +38,7 @@ case "$MODE" in
 
     echo "dbt done"
     cp /app/app/dbt/logs/* /app/app/csv/
-  
+    echo "logs available in csv folder"
     ;;
   pipeline)
     echo "Running pipeline..."

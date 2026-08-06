@@ -9,7 +9,7 @@ import os
 ## to be used in docker only
 
 parser = argparse.ArgumentParser(
-        description="Load CSV data into an SQLite database."
+        description="Load CSV data into an PostgreSQL database."
     )
 
 parser.add_argument(
@@ -32,7 +32,7 @@ parser.add_argument(
     "--db_host",
     default="localhost",
     type=Path,
-    help="db host name (default: localhost)",
+    help="db host name (default: localhost), switch to `db` if using PostrgeSQL within a docker service",
 )
 
 

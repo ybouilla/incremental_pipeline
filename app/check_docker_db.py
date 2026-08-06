@@ -1,3 +1,5 @@
+# file purpose is just to check if data exist avter applying transformation or dbt
+
 import psycopg
 from sqlalchemy import create_engine, text
 import os

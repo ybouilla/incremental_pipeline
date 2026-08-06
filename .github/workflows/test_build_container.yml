@@ -29,17 +29,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: build docker
-        run: docker build -t pipeline . 
-      - name: test docker
-        run: docker run  --name pipeline-test -e MODE=test pipeline test
-      - name: dispaly logs
+      - name: Build base image
+        run: docker build -f Dockerfile.base -t pipeline-base:latest .
+
+      - name: Build pipeline image
+        run: docker build -t pipeline:latest .
+
+      - name: Test docker
+        run: docker run --name pipeline-test -e MODE=test pipeline:latest
+
+      - name: Display logs
         if: failure()
         run: |
-            docker logs pipeline-test
-            docker inspect pipeline-test
-      - name: clean up
-        run: docker rm -f pipeline
+          docker logs pipeline-test
+          docker inspect pipeline-test
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f pipeline-test
 
   docker_compose:
     strategy:
@@ -57,9 +64,17 @@ jobs:
           docker compose version
     - name: check env vars
       run: docker compose config
-    - name: Start services
-      run: docker compose up --build --abort-on-container-exit --exit-code-from pipeline
+    - name: Build pipeline
+      run: docker compose build pipeline
 
+    - name: Start database
+      run: docker compose up -d db
+
+    - name: Wait for database
+      run: |
+        until docker compose exec -T db pg_isready -U myuser -d licenses_db; do
+        sleep 2
+        done
     - name: Show running containers
       run: docker compose ps
 
@@ -87,8 +102,16 @@ jobs:
           docker compose version
     - name: check env vars
       run: docker compose config
-    - name: Start services
-      run: MODE=dbt-pipeline docker compose up --build --abort-on-container-exit --exit-code-from pipeline
+
+    - name: start db
+      run: |
+        docker compose up -d db
+        until docker compose exec -T db pg_isready -U myuser -d licenses_db; do
+          sleep 2
+        done
+
+    - name: build pipeline
+      run: MODE=dbt-pipeline docker compose build pipeline
 
     - uses: actions/setup-python@v6
       with:
@@ -97,22 +120,33 @@ jobs:
     - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
       with:
         version: "0.11.28"
+
+    - name: Run dbt pipeline
+      run: |
+        MODE=dbt-pipeline docker compose run --rm pipeline
+
     - name: check data has been produced
       run: |
-        docker compose up -d db
+
         uv venv --python 3.12
         source .venv/bin/activate
         uv pip install -r requirements.txt
         uv run python -m app.check_docker_db
         docker compose down -v
 
+
     - name: Start dbt tests
       run: |
-        docker compose down -v
-        MODE=test-dbt docker compose up --build --abort-on-container-exit --exit-code-from pipeline
+        MODE=test-dbt docker compose build  pipeline
+        docker compose up -d db
+        docker compose run --rm pipeline test
 
     - name: Show running containers
       run: docker compose ps
+
+
+    - name: use incremental_pipeline
+      run: MODE=incremental_pipeline docker compose build incremental_pipeline
 
     - name: Show logs on failure
       if: failure()

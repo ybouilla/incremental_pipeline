@@ -1,16 +1,19 @@
 import argparse
 import csv
+import functools
 import os
+from pathlib import Path
 
 import pandas as pd
+import psycopg
 from app.config import PROJECT_ROOT
 from app.transformation import transform_pipeline
 from app.logger import  set_logging, logger
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple
-
+import argparse
 from app.incremental_pipeline_tools.state_manager import parse_ts, load_checkpoint, save_checkpoint
-
+from sqlalchemy import create_engine, text
 
 # ----------------------------
 # Config
@@ -22,6 +25,103 @@ LOOKBACK_MINUTES = 0  # lookback
 N_BATCH = 10  # number of batches
 MAX_RETRIES = 3  # number of retries to process when a batch of data fails
 
+
+
+
+
+
+def fetch_source_data_db(
+    start_ts: datetime,
+    end_ts: datetime,
+    init_table: str,
+    changed_table: str,
+    db_engine
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Load source datasets from database within a given time window.
+
+    Parameters
+    ----------
+    start_ts : datetime
+        Start of the extraction window (inclusive).
+    end_ts : datetime
+        End of the extraction window (inclusive).
+    init_table : str
+        Database table containing initial records.
+    changed_table : str
+        Database table containing change events.
+    db_url : str
+        SQLAlchemy database connection URL.
+
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame]
+        Filtered initial dataset and change events dataset.
+    """
+
+    logger.info(f"Fetching data from {start_ts} to {end_ts}")
+
+    
+
+    start_ts_utc = pd.Timestamp(start_ts).tz_convert("UTC")
+    end_ts_utc = pd.Timestamp(end_ts).tz_convert("UTC")
+
+    created_query = text(f"""
+        SELECT *
+        FROM {init_table}
+        WHERE creation_date >= :start_ts
+          AND creation_date <= :end_ts
+    """)
+
+    changed_query = text(f"""
+        SELECT *
+        FROM {changed_table}
+        WHERE date >= :start_ts
+          AND date <= :end_ts
+    """)
+
+    with db_engine.connect() as connection:
+
+        created_licenses = pd.read_sql(
+            created_query,
+            connection,
+            params={
+                "start_ts": start_ts_utc.to_pydatetime(),
+                "end_ts": end_ts_utc.to_pydatetime(),
+            }
+        )
+
+        changed_licenses = pd.read_sql(
+            changed_query,
+            connection,
+            params={
+                "start_ts": start_ts_utc.to_pydatetime(),
+                "end_ts": end_ts_utc.to_pydatetime(),
+            }
+        )
+
+    if len(created_licenses) == 0 or len(changed_licenses) == 0:
+        logger.error("[incremental pipeline] Failing to fetch data from database")
+        ValueError("Failing to fetch data from database")
+    # Keep the same datetime normalization as your CSV implementation
+    created_licenses["creation_date"] = pd.to_datetime(
+        created_licenses["creation_date"],
+        utc=True
+    )
+
+    changed_licenses["date"] = pd.to_datetime(
+        changed_licenses["date"],
+        utc=True
+    )
+
+    logger.info(
+        f"Fetched {len(created_licenses)} records from {init_table}"
+    )
+    logger.info(
+        f"Fetched {len(changed_licenses)} records from {changed_table}"
+    )
+
+    return created_licenses, changed_licenses
 
 
 def fetch_source_data(start_ts: datetime, end_ts: datetime, init_file: str,
@@ -47,34 +147,34 @@ def fetch_source_data(start_ts: datetime, end_ts: datetime, init_file: str,
 
     Returns
     -------
-    created_csv : pd.DataFrame
+    created_licenses : pd.DataFrame
         Filtered initial dataset within the time window.
-    changed_csv : pd.DataFrame
+    changed_licenses : pd.DataFrame
         Filtered change events dataset within the time window.
     """
     logger.info(f"Fetching data from {start_ts} to {end_ts}")
         
 
-    created_csv = pd.read_csv(os.path.join(folder_name, init_file), index_col=False)
-    changed_csv = pd.read_csv(os.path.join(folder_name, changed_file), index_col=False)
-    created_csv["creation_date"] = pd.to_datetime(created_csv["creation_date"], utc=True)
-    changed_csv["date"] = pd.to_datetime(changed_csv["date"], utc=True)
+    created_licenses = pd.read_csv(os.path.join(folder_name, init_file), index_col=False)
+    changed_licenses = pd.read_csv(os.path.join(folder_name, changed_file), index_col=False)
+    created_licenses["creation_date"] = pd.to_datetime(created_licenses["creation_date"], utc=True)
+    changed_licenses["date"] = pd.to_datetime(changed_licenses["date"], utc=True)
 
-    created_csv = created_csv[
-        (created_csv["creation_date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
-        (created_csv["creation_date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
+    created_licenses = created_licenses[
+        (created_licenses["creation_date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
+        (created_licenses["creation_date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
     ]
-    changed_csv = changed_csv[
-        (changed_csv["date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
-        (changed_csv["date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
+    changed_licenses = changed_licenses[
+        (changed_licenses["date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
+        (changed_licenses["date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
     ]
     # data = data[
     #     (data["date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
     #     (data["date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
     # ]
-    logger.info(f"Fetched {len(created_csv)} from {init_file} records")
-    logger.info(f"Fetched {len(changed_csv)} from {changed_file} records")
-    return created_csv, changed_csv
+    logger.info(f"Fetched {len(created_licenses)} from {init_file} records")
+    logger.info(f"Fetched {len(changed_licenses)} from {changed_file} records")
+    return created_licenses, changed_licenses
 
 # ----------------------------
 # Target store (idempotent)
@@ -129,6 +229,23 @@ def save_target(df: pd.DataFrame, output_file: str, folder_name: str):
     df.to_csv(os.path.join(folder_name, output_file), index=False)
 
 
+def save_target_db(df: pd.DataFrame, name: str, db_engine):
+    """
+    Persist the target dataset to disk as a CSV file.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataset to save.
+    output_file : str
+        Output filename.
+    folder_name : str
+        Directory where file is saved.
+    """
+    #print("data saved", df)
+    with db_engine.connect() as connection:
+        df.to_sql(connection, name, index=False)
+
 def upsert_batch(records: pd.DataFrame, target: pd.DataFrame) -> pd.DataFrame:
     """
     Perform an idempotent upsert of incoming batch into target dataset.
@@ -148,6 +265,10 @@ def upsert_batch(records: pd.DataFrame, target: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         Updated dataset after upsert operation.
     """
+#     t = target.to_dict()
+#     upsert_query = """upsert into {init_table} ({col})
+#     values ({values})
+# """ # TODO; store query into a seperate file
     if len(records) == 0:
         return target
 
@@ -161,7 +282,62 @@ def upsert_batch(records: pd.DataFrame, target: pd.DataFrame) -> pd.DataFrame:
 
     return combined
 
+def upsert_batch_db(records: pd.DataFrame, target: pd.DataFrame, name: str, engine) -> pd.DataFrame:
+    """
+    Perform an idempotent upsert of incoming batch into target dataset.
 
+    New records are merged with existing data, and duplicates are removed
+    based on the `id` column, keeping the latest occurrence.
+
+    Parameters
+    ----------
+    records : pd.DataFrame
+        Incoming batch of records.
+    target : pd.DataFrame
+        Existing dataset.
+
+    Returns
+    -------
+    pd.DataFrame
+        Updated dataset after upsert operation.
+    """
+    from sqlalchemy import text
+
+    records = target.to_dict(orient="records")
+
+    if not records:
+        return target
+
+    columns = list(records[0].keys())
+    column_names = ", ".join(columns)
+    value_names = ", ".join(f":{col}" for col in columns)
+
+    update_clause = ", ".join(
+        f"{col} = EXCLUDED.{col}"
+        for col in columns
+        if col != "id"
+    )
+
+    upsert_query = text(f"""
+        INSERT INTO {name} ({column_names})
+        VALUES ({value_names})
+        ON CONFLICT (id)
+        DO UPDATE SET
+            {update_clause}
+    """)
+
+    with engine.begin() as connection:
+        connection.execute(upsert_query, records)
+        logger.info("[incremental pipeline] Adding records in database")
+    # incoming = pd.DataFrame(records)
+    # incoming["date"] = pd.to_datetime(incoming["date"], utc=True)
+
+    # combine old + new
+    
+    combined = pd.concat([target, records], ignore_index=True)
+    combined = combined.drop_duplicates(subset="id", keep="last")  # remove duplicates if any
+
+    return combined
 # ----------------------------
 # Batch helper
 # ----------------------------
@@ -285,7 +461,10 @@ def run_backfill_pipeline(inital_license_file: str, changed_license_file: str,
 # ----------------------------
 # Pipeline
 # ----------------------------
-def run_pipeline(start: str, end: str, inital_license_file: str,
+def run_pipeline(start: str, end: str,
+                loading_method,
+                
+                  inital_license_file: str,
                  changed_license_file: str, created_output_file: str,
                  changed_output_file: str, folder_name: str) : 
 
@@ -349,7 +528,21 @@ def run_pipeline(start: str, end: str, inital_license_file: str,
     # ----------------------------
     # 3. Fetch data
     # ----------------------------
-    created_csv, changed_csv = fetch_source_data(start_ts, end_ts ,
+    # start postgres db connection
+    db_host = os.getenv("DB_HOST")
+    db_port = os.getenv("DB_PORT")
+    db_name = os.getenv("DB_NAME")
+    db_user = os.getenv("DB_USER")
+    db_password = os.getenv("DB_PASSWORD")
+    db_engine = psycopg.connect(
+    host=db_host,
+    port=db_port,
+    dbname=db_name,
+    user=db_user,
+    password=db_password
+)
+    db_engine = db_engine.cursor()
+    created_licenses, changed_licenses = fetch_source_data(start_ts, end_ts ,
                                                  inital_license_file,
                                                  changed_license_file,
                                                  folder_name)
@@ -360,6 +553,8 @@ def run_pipeline(start: str, end: str, inital_license_file: str,
     changed_target = load_target(folder_name, changed_output_file,
                                  ["license_id", "date" , "price", "type", "renewable"],
                                   "date")
+
+    
     # ----------------------------
     # 4. Track watermarks
     # ----------------------------
@@ -372,13 +567,13 @@ def run_pipeline(start: str, end: str, inital_license_file: str,
     # 5. Batch processing
     # ----------------------------
     
-    create_batches = chunk(created_csv, N_BATCH)
-    chgd_batches = chunk(changed_csv, N_BATCH)
+    create_batches = chunk(created_licenses, N_BATCH)
+    chgd_batches = chunk(changed_licenses, N_BATCH)
 
     max_len = max(len(create_batches), len(chgd_batches))
     for batch_id in range(max_len):
-        create_batch = create_batches[batch_id][1] if batch_id < len(create_batches) else pd.DataFrame(columns=created_csv.columns)
-        chgd_batch = chgd_batches[batch_id][1] if batch_id < len(chgd_batches) else pd.DataFrame(columns=changed_csv.columns)
+        create_batch = create_batches[batch_id][1] if batch_id < len(create_batches) else pd.DataFrame(columns=created_licenses.columns)
+        chgd_batch = chgd_batches[batch_id][1] if batch_id < len(chgd_batches) else pd.DataFrame(columns=changed_licenses.columns)
         logger.info(f"Batch {batch_id} | create={len(create_batch)} | change={len(chgd_batch)}")
 
         success_1, created_target = process_batch(batch_id, create_batch,  created_target,
@@ -430,22 +625,36 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--mode", choices=["incremental", "backfill"], default="incremental")
+    parser.add_argument("--mode", choices=["incremental", "backfill", "test"], default="incremental")
     parser.add_argument("--days", type=int, default=5)
-
+    parser.add_argument("--data-type", choices=["db", "csv"], default="db")
     args = parser.parse_args()
 
+    data_type = args.data_type
+    if data_type == "db":
+        # db methods
+        loading_method = functools.partial(fetch_source_data_db) # initial_license_file,licence_changed_file, "target_init_license.csv", "target_chgs.csv", folder_name)
+        saving_method = save_target_db
+        upsert_method = upsert_batch_db
+    else:
+        # csv methods
+        loading_method = fetch_source_data
+        saving_method = save_target
+        upsert_method = upsert_batch
+
     if args.mode == "incremental":
-        run_pipeline(None, None, initial_license_file,
-                     licence_changed_file, "target_init_license.csv", "target_chgs.csv", folder_name)
         
+            
+        run_pipeline(None, None, initial_license_file,
+                    licence_changed_file, "target_init_license.csv", "target_chgs.csv", folder_name)
+            
 
     elif args.mode == "backfill":
         run_backfill_pipeline(initial_license_file, licence_changed_file,
                               "target_init_license.csv", "target_chgs.csv",
                                folder_name, days=args.days)
         
-    elif args.mode == "test_incremental":
+    elif args.mode == "test":
         #########################################
         # this section is reserved for testing
         start, end = "2023-04-25T10:00:00", "2023-04-30T10:10:00"

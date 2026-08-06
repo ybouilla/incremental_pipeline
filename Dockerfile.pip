@@ -1,0 +1,25 @@
+# enter docker: docker run -it pipeline sh
+# for docker  incremental pipeline
+# use docker compose to let both docker files coexist
+
+
+# Install dependencies
+# this sql is to save states, not for the database service
+FROM pipeline-base
+RUN apt-get update && apt-get install -y \
+    sqlite3 \
+ && rm -rf /var/lib/apt/lists/*
+
+
+# Copy app
+COPY app/ /app/app
+
+# Optional data dir
+RUN mkdir -p /app/data
+
+ENV PYTHONPATH=/app
+
+COPY entrypoint_pip.sh /app/entrypoint_pip.sh
+RUN chmod +x /app/entrypoint_pip.sh
+
+ENTRYPOINT ["/app/entrypoint_pip.sh"]

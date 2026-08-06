@@ -26,12 +26,20 @@ services:
     env_file:
       - ./app/config/.env.postgre
 
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: pipeline-base:latest
+
   pipeline:
     build:
       context: ./
       dockerfile: Dockerfile
-
+      additional_contexts:
+        pipeline-base: service:base
     container_name: data_pipeline
+    
 
     depends_on:
       db:
@@ -39,6 +47,33 @@ services:
 
     environment:
       MODE: ${MODE:-pipeline}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: licenses_db
+      DB_USER: myuser
+      DB_PASSWORD: my_password
+    env_file:
+      - ./app/config/.env.postgre
+    volumes:
+      - ./app/csv:/app/src
+
+    restart: "no"
+
+  incremental_pipeline:
+    build:
+      context: ./
+      dockerfile: Dockerfile.pip
+      additional_contexts:
+        pipeline-base: service:base
+
+    container_name: incr_pipeline
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      MODE: ${MODE:-incremental_pipeline}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: licenses_db
