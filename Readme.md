@@ -121,9 +121,19 @@ An entrypoint file has been made in order to execute the different element of th
 
 ### 5.2 Incremental pipeline using python
 
-For simplicity sake; i will save states in a csv file `states/state.csv`, but this would be not suitable for production.
+Pipeline state (watermarks) is stored in a SQLite database `app/states/state.db` (table `pipeline_state`). Each source (created licenses, license changes) keeps its own watermark, per storage backend. Writes are transactional, so a crash cannot leave a half-written checkpoint.
 To run the incremental pipeline, enter:
 `uv run python -m app.incremental_pipeline `
+
+Use `--data-type` to choose where data is read from and written to:
+* `--data-type db` (default): reads PostgreSQL tables `initial_licenses` / `license_changes` (load them first with `uv run python -m app.add_database`) and upserts into tables `target_init_license` / `target_chgs` (created if missing). Connection settings come from the `DB_*` environment variables, or `app/config/.env.postgre`.
+* `--data-type csv`: reads `app/csv/initial_licenses.csv` / `license_changes.csv` and writes `app/csv/target_init_license.csv` / `target_chgs.csv`.
+
+```shell
+uv run python -m app.incremental_pipeline --data-type csv
+```
+
+Tests for the db backend run only when `PIPELINE_TEST_DB_URL` points at a disposable database (its tables are dropped), e.g. `PIPELINE_TEST_DB_URL=postgresql+psycopg://user:password@localhost:5432/test_db uv run pytest app/tests`.
 
 In the code, pipeline 's lookback is set using `LOOKBACK_MINUTES`. 
 A lookback window is used: `last_processed_date - window`
