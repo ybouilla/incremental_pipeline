@@ -72,21 +72,21 @@ def main(file_name_init_licenses: str, file_name_changed_licenses: str, folder_n
             invalid_count = (~result).sum()
 
             if invalid_count > 0:
-                logging.warning(
+                logger.warning(
                     f"Rule '{rule_name}' failed for {invalid_count} rows "
                     f"({invalid_count/len(logging_df):.2%})"
                 )
             else:
-                logging.info(f"Rule '{rule_name}' passed")
+                logger.info(f"Rule '{rule_name}' passed")
         else:
             # columns level checks
             if result:
-                logging.warning(
+                logger.warning(
                     f"Rule '{rule_name}' failed)"
                 )
             else:
                 
-                logging.info(f"Rule '{rule_name}' passed")
+                logger.info(f"Rule '{rule_name}' passed")
 
 if __name__ == '__main__':
     # files

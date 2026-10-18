@@ -90,8 +90,8 @@ class TestMain:
         self.mock_warning = MagicMock()
 
     def patch_logging(self, monkeypatch):
-        monkeypatch.setattr(m.logging, "info", self.mock_info)
-        monkeypatch.setattr(m.logging, "warning", self.mock_warning)
+        monkeypatch.setattr(m.logger, "info", self.mock_info)
+        monkeypatch.setattr(m.logger, "warning", self.mock_warning)
     
     def test_01_row_level_failure(self, monkeypatch, mock_csv):
 

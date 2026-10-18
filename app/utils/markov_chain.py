@@ -62,6 +62,7 @@ def simulate_markov_single(dates: Sequence, initial_state: str, transition_matri
             renew_flag[t] = active_block
             last_valid = labeled_states[t]
             main_states[t] = last_valid
+    return main_states, renew_flag
 
 
 

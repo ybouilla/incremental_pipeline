@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: inter_licenses_daily_states
+
+
+    columns:
+      - name: license_id
+        tests:
+          - not_null
+
+      - name: date
+        tests:
+          - not_null
+
+      - name: renewable
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]

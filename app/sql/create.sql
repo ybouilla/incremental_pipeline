@@ -1,4 +1,4 @@
-CREATE TABLE initial_licenses ( 
+CREATE TABLE IF NOT EXISTS initial_licenses ( 
     id INTEGER PRIMARY KEY,
     customer_id INTEGER,
     type VARCHAR(50),
@@ -6,7 +6,7 @@ CREATE TABLE initial_licenses (
     price INTEGER,
     renewable BOOLEAN);
 
-CREATE TABLE license_changes ( 
+CREATE TABLE IF NOT EXISTS license_changes ( 
      id INTEGER PRIMARY KEY,
      license_id INTEGER, 
      date DATE, 
