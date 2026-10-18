@@ -103,6 +103,8 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
     # 99         100 2026-01-04       True    100  PASS
 
     initial_state["id"] = -1  # indicates initial states
+
+
     changed_index = changed_clean.set_index(["license_id", "date"]).index
     initial_state = initial_state[
         ~initial_state.set_index(["license_id", "date"]).index.isin(changed_index)
@@ -260,6 +262,7 @@ def build_full_daily_states(states, created_csv):
     # 52351 2026-04-23         100    2026-01-04   NaN   100.0         PASS      True
     # 52451 2026-04-24         100    2026-01-04   NaN   100.0         PASS      True
     # 52551 2026-04-25         100    2026-01-04   NaN   100.0         PASS      True
+
     return full, all_dates
 # -------------------------
 # 3. State transitions

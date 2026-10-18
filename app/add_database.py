@@ -49,6 +49,8 @@ load_dotenv(os.path.join(current_folder, "config", ".env.postgre"))
 
 init_licenses_path = args.initial_licenses
 license_changes_path = args.license_changes
+## to be used in docker only
+
 # Load CSV
 init_licenses = pd.read_csv(init_licenses_path, header=0, index_col=False)
 license_changed = pd.read_csv(license_changes_path, header=0, index_col=False)
