@@ -70,23 +70,75 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
         .groupby(["license_id", "date"])
         .tail(1)
     )
-
+    # chgd_clean
+    #          id  license_id       date  price         type  renewable
+    # 7        7           1 2023-01-11    100         PASS       True
+    # 12      12           1 2023-01-12   5000  SUPERVISION       True
+    # 21      21           1 2023-01-13    100         PASS      False
+    # 28      28           1 2023-01-14   5000  SUPERVISION       True
+    # 30      30           1 2023-01-15    100         PASS       True
+    # ...    ...         ...        ...    ...          ...        ...
+    # 9998  9998          96 2026-04-24   1000          SIM       True
+    # 9995  9995          97 2026-04-19    100         PASS       True
+    # 9952  9952          98 2026-02-01    100         PASS       True
+    # 9991  9991          99 2026-03-03   1000          SIM       True
+    # 9994  9994         100 2026-03-29    100         PASS       True
     initial_state = (
         created_csv
         .rename(columns={"id": "license_id", "creation_date": "date"})
         [["license_id", "date", "renewable", "price", "type"]]
     )
+    # inital_state
+    #         license_id       date  renewable  price  type
+    # 0            1 2023-01-11       True   1000   SIM
+    # 1            2 2023-01-22       True   1000   SIM
+    # 2            3 2023-01-29       True   1000   SIM
+    # 3            4 2023-01-23       True    100  PASS
+    # 4            5 2023-03-30       True    100  PASS
+    # ..         ...        ...        ...    ...   ...
+    # 95          96 2026-04-08       True   1000   SIM
+    # 96          97 2026-03-31       True    100  PASS
+    # 97          98 2026-01-26       True    100  PASS
+    # 98          99 2026-01-04       True   1000   SIM
+    # 99         100 2026-01-04       True    100  PASS
 
-    initial_state["id"] = -1
+    initial_state["id"] = -1  # indicates initial states
+
+
     changed_index = changed_clean.set_index(["license_id", "date"]).index
     initial_state = initial_state[
         ~initial_state.set_index(["license_id", "date"]).index.isin(changed_index)
     ]
-
+    # initial_state
+    #         license_id       date  renewable  price  type  id
+    # 0            1 2023-01-11       True   1000   SIM  -1
+    # 1            2 2023-01-22       True   1000   SIM  -1
+    # 2            3 2023-01-29       True   1000   SIM  -1
+    # 3            4 2023-01-23       True    100  PASS  -1
+    # 4            5 2023-03-30       True    100  PASS  -1
+    # ..         ...        ...        ...    ...   ...  ..
+    # 95          96 2026-04-08       True   1000   SIM  -1
+    # 96          97 2026-03-31       True    100  PASS  -1
+    # 97          98 2026-01-26       True    100  PASS  -1
+    # 98          99 2026-01-04       True   1000   SIM  -1
+    # 99         100 2026-01-04       True    100  PASS  -1
     states = (
         pd.concat([changed_clean, initial_state])
         .sort_values(["license_id", "date", "id"])
     )
+    # states
+    #             id  license_id       date  price         type  renewable
+    # 7        7           1 2023-01-11    100         PASS       True
+    # 12      12           1 2023-01-12   5000  SUPERVISION       True
+    # 21      21           1 2023-01-13    100         PASS      False
+    # 28      28           1 2023-01-14   5000  SUPERVISION       True
+    # 30      30           1 2023-01-15    100         PASS       True
+    # ...    ...         ...        ...    ...          ...        ...
+    # 9952  9952          98 2026-02-01    100         PASS       True
+    # 98      -1          99 2026-01-04   1000          SIM       True
+    # 9991  9991          99 2026-03-03   1000          SIM       True
+    # 99      -1         100 2026-01-04    100         PASS       True
+    # 9994  9994         100 2026-03-29    100         PASS       True
 
     return states
 
@@ -114,6 +166,19 @@ def build_full_daily_states(states, created_csv):
     states = states.copy()
     states["date"] = pd.to_datetime(states["date"])
 
+    # states
+    #         id  license_id       date  price         type  renewable
+    # 7        7           1 2023-01-11    100         PASS       True
+    # 12      12           1 2023-01-12   5000  SUPERVISION       True
+    # 21      21           1 2023-01-13    100         PASS      False
+    # 28      28           1 2023-01-14   5000  SUPERVISION       True
+    # 30      30           1 2023-01-15    100         PASS       True
+    # ...    ...         ...        ...    ...          ...        ...
+    # 9952  9952          98 2026-02-01    100         PASS       True
+    # 98      -1          99 2026-01-04   1000          SIM       True
+    # 9991  9991          99 2026-03-03   1000          SIM       True
+    # 99      -1         100 2026-01-04    100         PASS       True
+    # 9994  9994         100 2026-03-29    100         PASS       True
     # -------------------------
     # 1. Full date range
     # -------------------------
@@ -122,7 +187,7 @@ def build_full_daily_states(states, created_csv):
     # -------------------------
     # 2. Full license universe
     # -------------------------
-    all_licenses = created_csv["id"].unique()
+    #all_licenses = created_csv["id"].unique()
 
     # -------------------------
     # 3. Build full grid (date x license)
@@ -131,7 +196,19 @@ def build_full_daily_states(states, created_csv):
     list(product(all_dates, created_csv["id"].unique())),
     columns=["date", "license_id"]
 )
-
+    # full grid
+    #             date  license_id
+    # 0      2023-01-11           1
+    # 1      2023-01-11           2
+    # 2      2023-01-11           3
+    # 3      2023-01-11           4
+    # 4      2023-01-11           5
+    # ...           ...         ...
+    # 120095 2026-04-25          96
+    # 120096 2026-04-25          97
+    # 120097 2026-04-25          98
+    # 120098 2026-04-25          99
+    # 120099 2026-04-25         100
     # attach creation_date
     full_grid = full_grid.merge(
         created_csv[["id", "creation_date"]],
@@ -141,6 +218,19 @@ def build_full_daily_states(states, created_csv):
     ).drop(columns="id")
     full_grid = full_grid[full_grid["date"] >= full_grid["creation_date"]]
 
+    # full_grid
+    #             date  license_id creation_date
+    # 0      2023-01-11           1    2023-01-11
+    # 100    2023-01-12           1    2023-01-11
+    # 200    2023-01-13           1    2023-01-11
+    # 300    2023-01-14           1    2023-01-11
+    # 400    2023-01-15           1    2023-01-11
+    # ...           ...         ...           ...
+    # 120095 2026-04-25          96    2026-04-08
+    # 120096 2026-04-25          97    2026-03-31
+    # 120097 2026-04-25          98    2026-01-26
+    # 120098 2026-04-25          99    2026-01-04
+    # 120099 2026-04-25         100    2026-01-04
     # -------------------------
     # 4. Clean state events (not sure it is very useful)
     # -------------------------
@@ -156,7 +246,22 @@ def build_full_daily_states(states, created_csv):
     full[["renewable", "type", "price"]] = (
         full.groupby("license_id")[["renewable", "type", "price"]]
         .ffill()
-    )
+    ) # Fill NA/NaN values by propagating the last valid observation to next valid.
+
+    
+    # full
+    #                date  license_id creation_date    id   price         type renewable
+    # 0     2023-01-11           1    2023-01-11   7.0   100.0         PASS      True
+    # 1     2023-01-12           1    2023-01-11  12.0  5000.0  SUPERVISION      True
+    # 2     2023-01-13           1    2023-01-11  21.0   100.0         PASS     False
+    # 3     2023-01-14           1    2023-01-11  28.0  5000.0  SUPERVISION      True
+    # 4     2023-01-15           1    2023-01-11  30.0   100.0         PASS      True
+    # ...          ...         ...           ...   ...     ...          ...       ...
+    # 52151 2026-04-21         100    2026-01-04   NaN   100.0         PASS      True
+    # 52251 2026-04-22         100    2026-01-04   NaN   100.0         PASS      True
+    # 52351 2026-04-23         100    2026-01-04   NaN   100.0         PASS      True
+    # 52451 2026-04-24         100    2026-01-04   NaN   100.0         PASS      True
+    # 52551 2026-04-25         100    2026-01-04   NaN   100.0         PASS      True
 
 
     return full, all_dates
@@ -188,6 +293,19 @@ def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> 
     # -------------------------
     # 1. Active / inactive from state (ground truth)
     # -------------------------
+    # daily state
+    #                 date  license_id creation_date    id   price         type renewable
+    # 0     2023-01-11           1    2023-01-11   7.0   100.0         PASS      True
+    # 1     2023-01-12           1    2023-01-11  12.0  5000.0  SUPERVISION      True
+    # 2     2023-01-13           1    2023-01-11  21.0   100.0         PASS     False
+    # 3     2023-01-14           1    2023-01-11  28.0  5000.0  SUPERVISION      True
+    # 4     2023-01-15           1    2023-01-11  30.0   100.0         PASS      True
+    # ...          ...         ...           ...   ...     ...          ...       ...
+    # 52512 2026-04-25          61    2025-10-21   NaN  5000.0  SUPERVISION      True
+    # 52513 2026-04-25          62    2025-09-03   NaN  5000.0  SUPERVISION      True
+    # 52514 2026-04-25          63    2025-02-16   NaN  5000.0  SUPERVISION      True
+    # 52502 2026-04-25          51    2025-02-26   NaN  1000.0          SIM      True
+    # 52551 2026-04-25         100    2026-01-04   NaN   100.0         PASS      True
     daily_states = (
         daily_states
         .sort_values(["date"])  # IMPORTANT: add timestamp if available (see below)
@@ -207,30 +325,56 @@ def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> 
     # -------------------------
     # 2. Base grid (all date/type combinations)
     # -------------------------
-    all_types = daily_states["type"].unique()
-
+    all_types = daily_states["type"].unique() # ['PASS', 'SUPERVISION', 'SIM']
+    # df
+    #                date         type
+    # 0    2023-01-11         PASS
+    # 1    2023-01-11  SUPERVISION
+    # 2    2023-01-11          SIM
+    # 3    2023-01-12         PASS
+    # 4    2023-01-12  SUPERVISION
+    # ...         ...          ...
+    # 3598 2026-04-24  SUPERVISION
+    # 3599 2026-04-24          SIM
+    # 3600 2026-04-25         PASS
+    # 3601 2026-04-25  SUPERVISION
+    # 3602 2026-04-25          SIM
     df = pd.DataFrame(
     list(product(all_dates, all_types)),
     columns=["date", "type"]
-)
+)   # generates all dates * all-types
 
     # -------------------------
-    # 3. Map counts (NO subtraction anywhere)
+    # 3. Map counts 
     # -------------------------
     df["active_license_count"] = df.set_index(["date", "type"]).index.map(active).fillna(0).values
+    # replace coalesce method
     df["inactive_license_count"] = df.set_index(["date", "type"]).index.map(inactive).fillna(0).values
 
     df["active_license_count"] = df["active_license_count"].astype(int)
     df["inactive_license_count"] = df["inactive_license_count"].astype(int)
 
     # -------------------------
-    # 4. Daily diffs (safe now)
+    # 4. Daily diffs 
     # -------------------------
     df = df.sort_values(["type", "date"])
 
     df["daily_active_diff"] = df.groupby("type")["active_license_count"].diff().fillna(0)
     df["daily_inactive_diff"] = df.groupby("type")["inactive_license_count"].diff().fillna(0)
 
+    # df
+    #                date         type  active_license_count  inactive_license_count  daily_active_diff  daily_inactive_diff
+    # 0    2023-01-11         PASS                     1                       0                0.0                  0.0
+    # 3    2023-01-12         PASS                     0                       0               -1.0                  0.0
+    # 6    2023-01-13         PASS                     0                       1                0.0                  1.0
+    # 9    2023-01-14         PASS                     0                       0                0.0                 -1.0
+    # 12   2023-01-15         PASS                     1                       0                1.0                  0.0
+    # ...         ...          ...                   ...                     ...                ...                  ...
+    # 3589 2026-04-21  SUPERVISION                    44                      10                1.0                 -1.0
+    # 3592 2026-04-22  SUPERVISION                    45                      10                1.0                  0.0
+    # 3595 2026-04-23  SUPERVISION                    45                      10                0.0                  0.0
+    # 3598 2026-04-24  SUPERVISION                    47                       9                2.0                 -1.0
+    # 3601 2026-04-25  SUPERVISION                    49                       9                2.0                  0.0
     return df
 
 
@@ -253,6 +397,7 @@ def compute_daily_events(states: pd.DataFrame, all_dates: pd.DatetimeIndex) -> p
     daily_events : pd.DataFrame
         Event counts per (date, type).
     """
+
     daily_events = (
         states.groupby(["date", "type"])
         .agg(
@@ -333,7 +478,19 @@ def compute_price(daily_states: pd.DataFrame, all_dates: pd.DatetimeIndex) -> pd
         )
         .reset_index(name="active_license_price")
     )
-
+    #     daily_price
+    #         date         type active_license_price
+    # 0    2023-01-11         PASS                100.0
+    # 1    2023-01-11  SUPERVISION                    0
+    # 2    2023-01-11          SIM                    0
+    # 3    2023-01-12         PASS                    0
+    # 4    2023-01-12  SUPERVISION               5000.0
+    # ...         ...          ...                  ...
+    # 3598 2026-04-24  SUPERVISION             235000.0
+    # 3599 2026-04-24          SIM              16000.0
+    # 3600 2026-04-25         PASS               1200.0
+    # 3601 2026-04-25  SUPERVISION             245000.0
+    # 3602 2026-04-25          SIM              16000.0
     return daily_price
 
 def compute_daily_price_diff(df: pd.DataFrame) -> pd.DataFrame:
@@ -361,7 +518,19 @@ def compute_daily_price_diff(df: pd.DataFrame) -> pd.DataFrame:
         .diff()
         .fillna(0)
     )
-
+    # df
+    #             date         type  active_license_count  ...  daily_inactive_diff  active_license_price  daily_price_diff
+    # 0    2023-01-11         PASS                     1  ...                  0.0                 100.0                 0
+    # 1    2023-01-12         PASS                     0  ...                  0.0                     0            -100.0
+    # 2    2023-01-13         PASS                     0  ...                  1.0                   0.0               0.0
+    # 3    2023-01-14         PASS                     0  ...                 -1.0                     0               0.0
+    # 4    2023-01-15         PASS                     1  ...                  0.0                 100.0             100.0
+    # ...         ...          ...                   ...  ...                  ...                   ...               ...
+    # 3598 2026-04-21  SUPERVISION                    44  ...                 -1.0              220000.0            5000.0
+    # 3599 2026-04-22  SUPERVISION                    45  ...                  0.0              225000.0            5000.0
+    # 3600 2026-04-23  SUPERVISION                    45  ...                  0.0              225000.0               0.0
+    # 3601 2026-04-24  SUPERVISION                    47  ...                 -1.0              235000.0           10000.0
+    # 3602 2026-04-25  SUPERVISION                    49  ...                  0.0              245000.0           10000.0
     # final display order
     df = df.sort_values(["date", "type"])
 
