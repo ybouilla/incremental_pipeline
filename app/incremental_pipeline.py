@@ -463,29 +463,27 @@ def run_backfill_pipeline(backend, days: int=5):
     """
     Execute a backfill pipeline for late-arriving data.
 
-    This function computes a lookback window and reprocesses recent data
-    to ensure consistency in the target datasets.
+    Each source is reprocessed from its own processed watermark minus
+    `days`, up to now. Late rows whose event date fell just behind the
+    watermark are picked up; upserts make re-reading the overlap harmless.
+    Anchoring on the watermark (not on the wall clock) keeps the window on
+    the data even when the pipeline stalled or the data is historical.
 
     Parameters
     ----------
     backend : CsvBackend | PostgresBackend
         Storage backend to read from and write to.
     days : int, optional
-        Number of days to backfill (default is 5).
+        Number of days to reprocess behind each watermark (default is 5).
 
     Returns
     -------
     None
     """
 
-    now = datetime.now(timezone.utc)
+    logger.info(f"BACKFILL START | lookback={days} days behind each watermark")
 
-    start_ts = now - timedelta(days=days)
-
-
-    logger.info(f"BACKFILL START | window={start_ts} -> {now}")
-
-    run_pipeline(start_ts, None, backend)
+    run_pipeline(None, None, backend, lookback=timedelta(days=days))
 
     logger.info("BACKFILL COMPLETE")
 
@@ -542,7 +540,7 @@ def process_source(source_name: str, records: pd.DataFrame, date_col: str,
     return max_data_ts, max_processed_ts, 0
 
 
-def run_pipeline(start: str, end: str, backend) :
+def run_pipeline(start: str, end: str, backend, lookback: timedelta = None) :
 
     """
     Execute the full incremental ingestion pipeline.
@@ -563,6 +561,9 @@ def run_pipeline(start: str, end: str, backend) :
         End timestamp (or None for current time).
     backend : CsvBackend | PostgresBackend
         Storage backend to read from and write to (see `make_backend`).
+    lookback : timedelta, optional
+        How far before the start to re-read, to absorb late data
+        (default: LOOKBACK_MINUTES). Backfill passes a wider one.
 
     Returns
     -------
@@ -572,6 +573,9 @@ def run_pipeline(start: str, end: str, backend) :
 
     if isinstance(start, str):
         start = parse_ts(start)
+
+    if lookback is None:
+        lookback = timedelta(minutes=LOOKBACK_MINUTES)
 
     sources = [dict(src) for src in SOURCES]
 
@@ -583,7 +587,7 @@ def run_pipeline(start: str, end: str, backend) :
         # csv and db targets are filled independently, so they track separate watermarks
         src["checkpoint"] = f"{DEFAULT_PIPELINE}.{backend.name}.{src['name']}"
         src["state"] = load_checkpoint(src["checkpoint"])
-        src["start_ts"] = (start or src["state"]["last_processed_timestamp"]) - timedelta(minutes=LOOKBACK_MINUTES)
+        src["start_ts"] = (start or src["state"]["last_processed_timestamp"]) - lookback
         logger.info(f"[{src['name']}] Loaded state | data_ts={src['state']['last_data_timestamp']} "
                     f"| processed_ts={src['state']['last_processed_timestamp']} "
                     f"| window={src['start_ts']} -> {end_ts}")
