@@ -263,6 +263,7 @@ def build_full_daily_states(states, created_csv):
     # 52451 2026-04-24         100    2026-01-04   NaN   100.0         PASS      True
     # 52551 2026-04-25         100    2026-01-04   NaN   100.0         PASS      True
 
+
     return full, all_dates
 # -------------------------
 # 3. State transitions
