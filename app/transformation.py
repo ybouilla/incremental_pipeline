@@ -9,6 +9,18 @@ import pandas as pd
 from app.config import PROJECT_ROOT
 
 
+# States. A license’s state is its current (renewable, type, price). The data only 
+# records state changes:
+
+# initial_licenses gives each license’s state on its creation day.
+# Each license_changes row means “from this date on, license X is in this state”.
+
+# The states table is the timeline of these changes for each license. On days with no 
+# event, a license has no row.
+
+# Forward fill. The output needs each license’s state on every day. Forward fill
+#  does that by carrying the last known value forward until the next change.
+
 # -------------------------
 # 1. Load data
 # -------------------------
@@ -88,7 +100,7 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
         .rename(columns={"id": "license_id", "creation_date": "date"})
         [["license_id", "date", "renewable", "price", "type"]]
     )
-    # inital_state
+    # initial_state
     #         license_id       date  renewable  price  type
     # 0            1 2023-01-11       True   1000   SIM
     # 1            2 2023-01-22       True   1000   SIM
@@ -105,23 +117,26 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
     initial_state["id"] = -1  # indicates initial states
 
 
+    # drop a license's creation row when a change exists on its creation day:
+    # the change wins (same as `filtered_initial` in sql/req.sql)
     changed_index = changed_clean.set_index(["license_id", "date"]).index
     initial_state = initial_state[
         ~initial_state.set_index(["license_id", "date"]).index.isin(changed_index)
     ]
-    # initial_state
-    #         license_id       date  renewable  price  type  id
-    # 0            1 2023-01-11       True   1000   SIM  -1
-    # 1            2 2023-01-22       True   1000   SIM  -1
-    # 2            3 2023-01-29       True   1000   SIM  -1
-    # 3            4 2023-01-23       True    100  PASS  -1
-    # 4            5 2023-03-30       True    100  PASS  -1
-    # ..         ...        ...        ...    ...   ...  ..
-    # 95          96 2026-04-08       True   1000   SIM  -1
-    # 96          97 2026-03-31       True    100  PASS  -1
-    # 97          98 2026-01-26       True    100  PASS  -1
-    # 98          99 2026-01-04       True   1000   SIM  -1
-    # 99         100 2026-01-04       True    100  PASS  -1
+    # initial_state (licenses 1 and 2 removed: both have a change on their creation day)
+    #         license_id       date  renewable  price         type  id
+    # 2            3 2023-01-29       True   1000          SIM  -1
+    # 3            4 2023-01-23       True    100         PASS  -1
+    # 4            5 2023-03-30       True    100         PASS  -1
+    # 5            6 2023-03-27       True   1000          SIM  -1
+    # 6            7 2023-03-21       True   5000  SUPERVISION  -1
+    # ..         ...        ...        ...    ...          ...  ..
+    # 95          96 2026-04-08       True   1000          SIM  -1
+    # 96          97 2026-03-31       True    100         PASS  -1
+    # 97          98 2026-01-26       True    100         PASS  -1
+    # 98          99 2026-01-04       True   1000          SIM  -1
+    # 99         100 2026-01-04       True    100         PASS  -1
+    # [97 rows x 6 columns]
     states = (
         pd.concat([changed_clean, initial_state])
         .sort_values(["license_id", "date", "id"])
@@ -142,6 +157,10 @@ def build_states(created_csv: pd.DataFrame, changed_csv: pd.DataFrame) -> pd.Dat
 
     return states
 
+
+# -------------------------
+# 3. Expand to a daily panel (forward fill)
+# -------------------------
 def build_full_daily_states(states, created_csv):
     """
     Build a complete panel dataset covering all dates and all licenses.
@@ -232,8 +251,10 @@ def build_full_daily_states(states, created_csv):
     # 120098 2026-04-25          99    2026-01-04
     # 120099 2026-04-25         100    2026-01-04
     # -------------------------
-    # 4. Clean state events (not sure it is very useful)
+    # 4. Deduplicate states per (license_id, date)
     # -------------------------
+    # safeguard only: build_states already returns one row per (license_id, date),
+    # so this is a no-op on its output (same as `states_dedup` in sql/req.sql)
     states = states.sort_values(["license_id", "date", "id"])
     states = states.drop_duplicates(["license_id", "date"], keep="last")
 
@@ -246,7 +267,8 @@ def build_full_daily_states(states, created_csv):
     full[["renewable", "type", "price"]] = (
         full.groupby("license_id")[["renewable", "type", "price"]]
         .ffill()
-    ) # Fill NA/NaN values by propagating the last valid observation to next valid.
+    ) # per license: carry the last known state forward to the days without an event
+    # (`id` is not filled: it is only set on the days an event happened)
 
     
     # full
@@ -266,7 +288,7 @@ def build_full_daily_states(states, created_csv):
 
     return full, all_dates
 # -------------------------
-# 3. State transitions
+# 4. Active / inactive counts
 # -------------------------
 def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> pd.DataFrame:
     """
@@ -308,7 +330,8 @@ def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> 
     # 52551 2026-04-25         100    2026-01-04   NaN   100.0         PASS      True
     daily_states = (
         daily_states
-        .sort_values(["date"])  # IMPORTANT: add timestamp if available (see below)
+        .sort_values(["date"])
+        # safeguard only: the daily panel already has one row per (date, license_id)
         .drop_duplicates(subset=["date", "license_id"], keep="last")
     )
     active = (
@@ -348,7 +371,7 @@ def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> 
     # 3. Map counts 
     # -------------------------
     df["active_license_count"] = df.set_index(["date", "type"]).index.map(active).fillna(0).values
-    # replace coalesce method
+    # (date, type) pairs with no license -> 0, like COALESCE(..., 0) in sql/req.sql
     df["inactive_license_count"] = df.set_index(["date", "type"]).index.map(inactive).fillna(0).values
 
     df["active_license_count"] = df["active_license_count"].astype(int)
@@ -379,8 +402,9 @@ def compute_counts(daily_states: pd.DataFrame,  all_dates: pd.DatetimeIndex) -> 
 
 
 # -------------------------
-# 4. Daily event aggregation
+# Daily event aggregation (not used by transform_pipeline)
 # -------------------------
+# expects `activated` / `deactivated` columns, which build_states does not produce
 def compute_daily_events(states: pd.DataFrame, all_dates: pd.DatetimeIndex) -> pd.DataFrame:
     """
     Aggregate activation and deactivation events per day and type.
@@ -415,7 +439,8 @@ def compute_daily_events(states: pd.DataFrame, all_dates: pd.DatetimeIndex) -> p
 
 
 # -------------------------
-# 5. Active / inactive calculations
+# Per-license daily expansion (not used by transform_pipeline,
+# which forward fills in build_full_daily_states)
 # -------------------------
 
 
@@ -443,7 +468,7 @@ def expand_license_daily(df: pd.DataFrame) -> pd.Series:
         .ffill()
     )
 # -------------------------
-# 6. Price computation
+# 5. Price computation
 # -------------------------
 def compute_price(daily_states: pd.DataFrame, all_dates: pd.DatetimeIndex) -> pd.DataFrame:
     """
@@ -536,7 +561,7 @@ def compute_daily_price_diff(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 # -------------------------
-# 7. Full pipeline
+# 6. Full pipeline
 # -------------------------
 def transform_pipeline(init: pd.DataFrame, changed: pd.DataFrame) -> pd.DataFrame:
     """
