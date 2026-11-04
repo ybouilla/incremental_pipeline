@@ -1,5 +1,15 @@
 numpy==2.4.4
 pandas==3.0.2
 pytest==9.0.3
+# dbt
+dbt-core==1.11.11
+dbt-bigquery==1.11.2
+dbt-extractor==0.6.0
+dbt-semantic-interfaces
+dbt-postgres
+# dbt-sqlite==1.10.0
+psycopg[binary]
+python-dotenv
+sqlalchemy==2.0.51
 # pandera[pandas]
 # typing-extensions

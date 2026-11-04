@@ -1,0 +1,20 @@
+version: 2
+
+models:
+  - name: inter_state_licenses
+
+    columns:
+      - name: renewable
+        tests:
+          - not_null
+
+      - name: type
+        tests:
+          - not_null
+    
+      - name: license_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_initial_licenses')
+                field: license_id

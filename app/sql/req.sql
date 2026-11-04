@@ -1,7 +1,5 @@
 PRAGMA recursive_triggers = ON;
 
-PRAGMA recursive_triggers = ON;
-
 
 WITH RECURSIVE
 

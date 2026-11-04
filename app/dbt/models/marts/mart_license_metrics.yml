@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: mart_license_metrics
+
+    columns:
+      - name: active_license_count
+        tests:
+          - not_null
+
+      - name: inactive_license_count
+        tests:
+          - not_null
+
+      - name: active_license_price
+        tests:
+          - not_null

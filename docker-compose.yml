@@ -1,0 +1,90 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:17
+    container_name: postgres_db
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: licenses_db
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: my_password
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U myuser -d licenses_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - ./app/config/.env.postgre
+
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    image: pipeline-base:latest
+
+  pipeline:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      additional_contexts:
+        pipeline-base: service:base
+    container_name: data_pipeline
+    
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      MODE: ${MODE:-pipeline}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: licenses_db
+      DB_USER: myuser
+      DB_PASSWORD: my_password
+    env_file:
+      - ./app/config/.env.postgre
+    volumes:
+      - ./app/csv:/app/src
+
+    restart: "no"
+
+  incremental_pipeline:
+    build:
+      context: ./
+      dockerfile: Dockerfile.pip
+      additional_contexts:
+        pipeline-base: service:base
+
+    container_name: incr_pipeline
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    environment:
+      MODE: ${MODE:-incremental_pipeline}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: licenses_db
+      DB_USER: myuser
+      DB_PASSWORD: my_password
+    env_file:
+      - ./app/config/.env.postgre
+    volumes:
+      - ./app/csv:/app/src
+
+    restart: "no"
+
+volumes:
+  postgres_data:

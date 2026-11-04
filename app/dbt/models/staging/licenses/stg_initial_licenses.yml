@@ -1,0 +1,19 @@
+version: 2
+
+models:
+  - name: stg_initial_licenses
+
+    columns:
+      - name: license_id
+        tests:
+          - not_null
+          
+
+      - name: creation_date
+        tests:
+          - not_null
+
+      - name: type
+        tests:
+          - not_null
+    version: 2
