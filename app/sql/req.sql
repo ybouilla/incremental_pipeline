@@ -1,5 +1,19 @@
 PRAGMA recursive_triggers = ON;
 
+-- changed_clean: if a license has several changes on the same day, keep the one with the highest id. This assumes ids increase in event order.
+-- initial_state: turns each creation row into a state row, with id = -1 so it sorts before any real change.
+-- filtered_initial: drops the creation row when a change happened on the same day, so the change wins.
+-- states: the union of 1 and 3, giving each license’s timeline.
+-- states_dedup: dedups again by (license, date). This is redundant, because steps 1 and 3 already guarantee one row per (license, date).
+-- calendar: a recursive CTE that generates every day from the first event to the last.
+-- 7–8. grid: every (day, license) pair from the license’s creation day on.
+-- joined / daily_states: forward fill, giving each license’s state on every day.
+-- 10–11. Counts and price per (day, type):
+-- active = renewable
+-- inactive = not renewable
+-- price = sum of the active licenses’ prices
+-- 12–13. Full (day × type) grid: missing combinations get 0 (COALESCE).
+-- Daily diffs: LAG gives the change from the previous day. The first day is set to 0.
 
 WITH RECURSIVE
 
