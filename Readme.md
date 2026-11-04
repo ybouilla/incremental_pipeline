@@ -16,8 +16,7 @@ This project simulates a full data lifecycle pipeline:
 ## 0. Installation 
 
 **Requirements**:
-- Linux OS 
-- Windows with WSL2 (Windows Subsystem Linux) activated
+- Linux OS or Windows with WSL2 (Windows Subsystem Linux) activated
 - Docker
 **(optional: docker installation)**
 If you want to run the whole pipeline through docker, you may need to install docker on your system.
@@ -112,7 +111,7 @@ An entrypoint file has been made in order to execute the different element of th
 - data transformation (python)
 - data transformation (SQL)
 
-## 5. Pipeline (not shipped in docker)
+## 5. Pipeline
 
 ### 5.1 Conception
 
