@@ -23,12 +23,17 @@ LOOKBACK_MINUTES = 0  # lookback
 N_BATCH = 10  # number of batches
 MAX_RETRIES = 3  # number of retries to process when a batch of data fails
 
+# Arrival timestamp used as watermark: when a row reached the source, not when the
+# event happened. Late events (old `date`, new `ingested_at`) are then picked up
+# by the next incremental run.
+WATERMARK_COL = "ingested_at"
+
 # Sources processed by the pipeline; each one keeps its own watermark
 SOURCES = [
     {"name": "created", "date_col": "creation_date",
-     "columns": ["id", "customer_id", "type", "creation_date", "price", "renewable"]},
+     "columns": ["id", "customer_id", "type", "creation_date", "price", "renewable", WATERMARK_COL]},
     {"name": "changed", "date_col": "date",
-     "columns": ["id", "license_id", "date", "price", "type", "renewable"]},
+     "columns": ["id", "license_id", "date", "price", "type", "renewable", WATERMARK_COL]},
 ]
 
 
@@ -63,7 +68,8 @@ def create_target_tables(db_engine, created_table: str, changed_table: str):
                 type VARCHAR(50),
                 creation_date DATE,
                 price INTEGER,
-                renewable BOOLEAN)
+                renewable BOOLEAN,
+                {WATERMARK_COL} TIMESTAMPTZ)
         """))
         connection.execute(text(f"""
             CREATE TABLE IF NOT EXISTS {changed_table} (
@@ -72,124 +78,108 @@ def create_target_tables(db_engine, created_table: str, changed_table: str):
                 date DATE,
                 price INTEGER,
                 type VARCHAR(50),
-                renewable BOOLEAN)
+                renewable BOOLEAN,
+                {WATERMARK_COL} TIMESTAMPTZ)
         """))
+        # target tables created before ingested_at existed
+        for table in (created_table, changed_table):
+            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {WATERMARK_COL} TIMESTAMPTZ"))
 
 
-def fetch_source_data_db(
-    start_ts: datetime,
-    end_ts: datetime,
-    init_table: str,
-    changed_table: str,
-    db_engine
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def fetch_source_data_db(table: str, date_col: str, start_ts: datetime, end_ts: datetime,
+                         strict: bool, db_engine) -> pd.DataFrame:
     """
-    Load source datasets from database within a given time window.
+    Load one source table's rows that arrived within a given time window.
 
     Parameters
     ----------
+    table : str
+        Source table (must have an `ingested_at` column, see `sql/create.sql`).
+    date_col : str
+        Event date column, normalized to UTC datetimes.
     start_ts : datetime
-        Start of the extraction window (inclusive).
+        Start of the arrival window.
     end_ts : datetime
-        End of the extraction window (inclusive).
-    init_table : str
-        Database table containing initial records.
-    changed_table : str
-        Database table containing change events.
+        End of the arrival window (inclusive).
+    strict : bool
+        Exclude rows arrived exactly at `start_ts` (incremental runs: the
+        watermark means "everything up to here is processed").
     db_engine : sqlalchemy.Engine
         Engine connected to the PostgreSQL database.
 
     Returns
     -------
-    Tuple[pd.DataFrame, pd.DataFrame]
-        Filtered initial dataset and change events dataset.
+    pd.DataFrame
+        Rows with `start_ts < ingested_at <= end_ts` (`>=` if not strict).
     """
+    logger.info(f"Fetching {table} arrived from {start_ts} to {end_ts}")
 
-    logger.info(f"Fetching data from {start_ts} to {end_ts}")
-
+    query = text(f"""
+        SELECT *
+        FROM {table}
+        WHERE {WATERMARK_COL} {">" if strict else ">="} :start_ts
+          AND {WATERMARK_COL} <= :end_ts
+    """)
     params = {
         "start_ts": pd.Timestamp(start_ts).tz_convert("UTC").to_pydatetime(),
         "end_ts": pd.Timestamp(end_ts).tz_convert("UTC").to_pydatetime(),
     }
 
-    created_query = text(f"""
-        SELECT *
-        FROM {init_table}
-        WHERE creation_date >= :start_ts
-          AND creation_date <= :end_ts
-    """)
-
-    changed_query = text(f"""
-        SELECT *
-        FROM {changed_table}
-        WHERE date >= :start_ts
-          AND date <= :end_ts
-    """)
-
     with db_engine.connect() as connection:
-        created_licenses = pd.read_sql(created_query, connection, params=params)
-        changed_licenses = pd.read_sql(changed_query, connection, params=params)
+        records = pd.read_sql(query, connection, params=params)
 
     # Keep the same datetime normalization as the CSV implementation
-    created_licenses["creation_date"] = pd.to_datetime(created_licenses["creation_date"], utc=True)
-    changed_licenses["date"] = pd.to_datetime(changed_licenses["date"], utc=True)
+    records[date_col] = pd.to_datetime(records[date_col], utc=True)
+    records[WATERMARK_COL] = pd.to_datetime(records[WATERMARK_COL], utc=True)
 
-    logger.info(f"Fetched {len(created_licenses)} records from {init_table}")
-    logger.info(f"Fetched {len(changed_licenses)} records from {changed_table}")
+    logger.info(f"Fetched {len(records)} records from {table}")
+    return records
 
-    return created_licenses, changed_licenses
 
-def fetch_source_data(start_ts: datetime, end_ts: datetime, init_file: str,
-                      changed_file: str, folder_name: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def fetch_source_data(path: str, date_col: str, start_ts: datetime, end_ts: datetime,
+                      strict: bool) -> pd.DataFrame:
     """
-    Load and filter source datasets within a given time window.
+    Load one source CSV file and keep the rows that arrived within a time window.
 
-    This function reads raw CSV files, converts timestamp columns to UTC timezone,
-    and filters records based on the provided start and end timestamps.
+    If the file has an `ingested_at` column it is used as arrival time.
+    Otherwise every row gets the file's modification time: rewriting or
+    appending to the file makes its rows new again, an untouched file is
+    skipped by the next incremental run.
 
     Parameters
     ----------
+    path : str
+        Source CSV file.
+    date_col : str
+        Event date column, normalized to UTC datetimes.
     start_ts : datetime
-        Start of the extraction window (inclusive).
+        Start of the arrival window.
     end_ts : datetime
-        End of the extraction window (inclusive).
-    init_file : str
-        Filename of the initial dataset.
-    changed_file : str
-        Filename of the change events dataset.
-    folder_name : str
-        Directory containing input files.
+        End of the arrival window (inclusive).
+    strict : bool
+        Exclude rows arrived exactly at `start_ts`.
 
     Returns
     -------
-    created_licenses : pd.DataFrame
-        Filtered initial dataset within the time window.
-    changed_licenses : pd.DataFrame
-        Filtered change events dataset within the time window.
+    pd.DataFrame
+        Rows with `start_ts < ingested_at <= end_ts` (`>=` if not strict).
     """
-    logger.info(f"Fetching data from {start_ts} to {end_ts}")
-        
+    logger.info(f"Fetching {path} arrived from {start_ts} to {end_ts}")
 
-    created_licenses = pd.read_csv(os.path.join(folder_name, init_file), index_col=False)
-    changed_licenses = pd.read_csv(os.path.join(folder_name, changed_file), index_col=False)
-    created_licenses["creation_date"] = pd.to_datetime(created_licenses["creation_date"], utc=True)
-    changed_licenses["date"] = pd.to_datetime(changed_licenses["date"], utc=True)
+    records = pd.read_csv(path, index_col=False)
+    records[date_col] = pd.to_datetime(records[date_col], utc=True)
+    if WATERMARK_COL in records.columns:
+        records[WATERMARK_COL] = pd.to_datetime(records[WATERMARK_COL], utc=True)
+    else:
+        # microsecond precision, like the stored watermark
+        records[WATERMARK_COL] = pd.Timestamp(datetime.fromtimestamp(os.path.getmtime(path), timezone.utc))
 
-    created_licenses = created_licenses[
-        (created_licenses["creation_date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
-        (created_licenses["creation_date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
-    ]
-    changed_licenses = changed_licenses[
-        (changed_licenses["date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
-        (changed_licenses["date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
-    ]
-    # data = data[
-    #     (data["date"] >= pd.Timestamp(start_ts).tz_convert("UTC")) &
-    #     (data["date"] <= pd.Timestamp(end_ts).tz_convert("UTC"))
-    # ]
-    logger.info(f"Fetched {len(created_licenses)} from {init_file} records")
-    logger.info(f"Fetched {len(changed_licenses)} from {changed_file} records")
-    return created_licenses, changed_licenses
+    start = pd.Timestamp(start_ts).tz_convert("UTC")
+    after_start = records[WATERMARK_COL] > start if strict else records[WATERMARK_COL] >= start
+    records = records[after_start & (records[WATERMARK_COL] <= pd.Timestamp(end_ts).tz_convert("UTC"))]
+
+    logger.info(f"Fetched {len(records)} records from {path}")
+    return records
 
 # ----------------------------
 # Target store (idempotent)
@@ -356,11 +346,12 @@ class CsvBackend:
     def __init__(self, folder_name: str, inital_license_file: str, changed_license_file: str,
                  created_output: str, changed_output: str):
         self.folder_name = folder_name
-        self.input_files = (inital_license_file, changed_license_file)
+        self.inputs = {"created": inital_license_file, "changed": changed_license_file}
         self.outputs = {"created": created_output, "changed": changed_output}
 
-    def fetch(self, start_ts: datetime, end_ts: datetime) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return fetch_source_data(start_ts, end_ts, *self.input_files, self.folder_name)
+    def fetch(self, source: dict, start_ts: datetime, end_ts: datetime, strict: bool) -> pd.DataFrame:
+        return fetch_source_data(os.path.join(self.folder_name, self.inputs[source["name"]]),
+                                 source["date_col"], start_ts, end_ts, strict)
 
     def writer(self, source: dict) -> Callable[[pd.DataFrame], None]:
         output_file = self.outputs[source["name"]]
@@ -385,12 +376,13 @@ class PostgresBackend:
     def __init__(self, db_engine, init_table: str, changed_table: str,
                  created_output: str, changed_output: str):
         self.db_engine = db_engine
-        self.input_tables = (init_table, changed_table)
+        self.inputs = {"created": init_table, "changed": changed_table}
         self.outputs = {"created": created_output, "changed": changed_output}
         create_target_tables(db_engine, self.outputs["created"], self.outputs["changed"])
 
-    def fetch(self, start_ts: datetime, end_ts: datetime) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        return fetch_source_data_db(start_ts, end_ts, *self.input_tables, self.db_engine)
+    def fetch(self, source: dict, start_ts: datetime, end_ts: datetime, strict: bool) -> pd.DataFrame:
+        return fetch_source_data_db(self.inputs[source["name"]], source["date_col"],
+                                    start_ts, end_ts, strict, self.db_engine)
 
     def writer(self, source: dict) -> Callable[[pd.DataFrame], None]:
         table = self.outputs[source["name"]]
@@ -463,45 +455,45 @@ def run_backfill_pipeline(backend, days: int=5):
     """
     Execute a backfill pipeline for late-arriving data.
 
-    This function computes a lookback window and reprocesses recent data
-    to ensure consistency in the target datasets.
+    Each source re-reads the rows that arrived in the `days` before its
+    processed watermark, up to now. Late events are already handled by the
+    incremental run (the watermark is the arrival time `ingested_at`), so
+    backfill is a repair tool: it re-applies recent loads, e.g. after a
+    target was damaged. Upserts make re-reading the overlap harmless, and
+    the watermark never moves backwards.
 
     Parameters
     ----------
     backend : CsvBackend | PostgresBackend
         Storage backend to read from and write to.
     days : int, optional
-        Number of days to backfill (default is 5).
+        Number of days of arrivals to reprocess behind each watermark (default is 5).
 
     Returns
     -------
     None
     """
 
-    now = datetime.now(timezone.utc)
+    logger.info(f"BACKFILL START | lookback={days} days behind each watermark")
 
-    start_ts = now - timedelta(days=days)
-
-
-    logger.info(f"BACKFILL START | window={start_ts} -> {now}")
-
-    run_pipeline(start_ts, None, backend)
+    run_pipeline(None, None, backend, lookback=timedelta(days=days))
 
     logger.info("BACKFILL COMPLETE")
 
 # ----------------------------
 # Pipeline
 # ----------------------------
-def process_source(source_name: str, records: pd.DataFrame, date_col: str,
+def process_source(source_name: str, records: pd.DataFrame,
                    write: Callable[[pd.DataFrame], None],
                    state: dict) -> Tuple[datetime, datetime, int]:
     """
-    Process one source in timestamp order and compute its new watermarks.
+    Process one source in arrival order and compute its new watermarks.
 
-    Records are sorted by `date_col` before batching, so the processed
-    watermark only ever covers rows that were actually persisted. Processing
-    stops at the first failed batch: the processed watermark stays at the
-    last successful batch and the next run picks up from there.
+    The processed watermark means "every row arrived at or before this
+    timestamp is persisted". Records are sorted by `ingested_at` before
+    batching; processing stops at the first failed batch and the watermark
+    is set just before that batch's first arrival time, so rows sharing a
+    timestamp with the failed batch (e.g. one bulk load) are re-read next run.
 
     Parameters
     ----------
@@ -509,8 +501,6 @@ def process_source(source_name: str, records: pd.DataFrame, date_col: str,
         Name used for logging.
     records : pd.DataFrame
         Records fetched for this source's window.
-    date_col : str
-        Column holding the event timestamp.
     write : Callable[[pd.DataFrame], None]
         Backend writer for this source.
     state : dict
@@ -519,30 +509,34 @@ def process_source(source_name: str, records: pd.DataFrame, date_col: str,
     Returns
     -------
     max_data_ts : datetime
-        Latest timestamp seen in the source.
+        Latest arrival time seen in the source.
     max_processed_ts : datetime
-        Latest timestamp of contiguously persisted data.
+        Latest arrival time up to which everything is persisted.
     failed_batches : int
         1 if processing stopped on a failed batch, else 0.
     """
     max_data_ts = state["last_data_timestamp"]
-    max_processed_ts = state["last_processed_timestamp"]
+    previous_ts = state["last_processed_timestamp"]
 
-    records = records.sort_values(date_col, kind="stable")
+    records = records.sort_values([WATERMARK_COL, "id"], kind="stable")
     if len(records):
-        max_data_ts = max(max_data_ts, records[date_col].max().to_pydatetime())
+        max_data_ts = max(max_data_ts, records[WATERMARK_COL].max().to_pydatetime())
 
+    done_ts = previous_ts
     for batch_id, batch in chunk(records, N_BATCH):
         logger.info(f"[{source_name}] Batch {batch_id} | size={len(batch)}")
         if not process_batch(batch_id, batch, write):
+            held_ts = batch[WATERMARK_COL].min().to_pydatetime() - timedelta(microseconds=1)
+            # backfill re-reads rows behind the watermark: never move it backwards
+            max_processed_ts = max(previous_ts, min(done_ts, held_ts))
             logger.error(f"[{source_name}] stopping at batch {batch_id} | processed_ts held at {max_processed_ts}")
             return max_data_ts, max_processed_ts, 1
-        max_processed_ts = max(max_processed_ts, batch[date_col].max().to_pydatetime())
+        done_ts = max(done_ts, batch[WATERMARK_COL].max().to_pydatetime())
 
-    return max_data_ts, max_processed_ts, 0
+    return max_data_ts, done_ts, 0
 
 
-def run_pipeline(start: str, end: str, backend) :
+def run_pipeline(start: str, end: str, backend, lookback: timedelta = None) :
 
     """
     Execute the full incremental ingestion pipeline.
@@ -563,6 +557,12 @@ def run_pipeline(start: str, end: str, backend) :
         End timestamp (or None for current time).
     backend : CsvBackend | PostgresBackend
         Storage backend to read from and write to (see `make_backend`).
+    lookback : timedelta, optional
+        How far before the start to re-read (default: LOOKBACK_MINUTES).
+        Backfill passes a wider one.
+
+    `start` / `end` bound the arrival time (`ingested_at`), not the event
+    date. Without `start`, each source resumes strictly after its watermark.
 
     Returns
     -------
@@ -572,6 +572,9 @@ def run_pipeline(start: str, end: str, backend) :
 
     if isinstance(start, str):
         start = parse_ts(start)
+
+    if lookback is None:
+        lookback = timedelta(minutes=LOOKBACK_MINUTES)
 
     sources = [dict(src) for src in SOURCES]
 
@@ -583,27 +586,25 @@ def run_pipeline(start: str, end: str, backend) :
         # csv and db targets are filled independently, so they track separate watermarks
         src["checkpoint"] = f"{DEFAULT_PIPELINE}.{backend.name}.{src['name']}"
         src["state"] = load_checkpoint(src["checkpoint"])
-        src["start_ts"] = (start or src["state"]["last_processed_timestamp"]) - timedelta(minutes=LOOKBACK_MINUTES)
+        src["start_ts"] = (start or src["state"]["last_processed_timestamp"]) - lookback
         logger.info(f"[{src['name']}] Loaded state | data_ts={src['state']['last_data_timestamp']} "
                     f"| processed_ts={src['state']['last_processed_timestamp']} "
                     f"| window={src['start_ts']} -> {end_ts}")
 
-    # ----------------------------
-    # 3. Fetch data (widest window, then narrowed per source)
-    # ----------------------------
-    fetch_start = min(src["start_ts"] for src in sources)
-    sources[0]["records"], sources[1]["records"] = backend.fetch(fetch_start, end_ts)
-
     failed_batches = 0
     for src in sources:
-        records = src["records"]
-        records = records[records[src["date_col"]] >= src["start_ts"]]
+        # ----------------------------
+        # 3. Fetch data
+        # ----------------------------
+        # resuming from the watermark: rows arrived exactly at it are already processed
+        strict = start is None
+        records = backend.fetch(src, src["start_ts"], end_ts, strict)
 
         # ----------------------------
         # 4-5. Batch processing
         # ----------------------------
         max_data_ts, max_processed_ts, failed = process_source(
-            src["name"], records, src["date_col"], backend.writer(src), src["state"])
+            src["name"], records, backend.writer(src), src["state"])
         failed_batches += failed
 
         # ----------------------------
@@ -638,11 +639,9 @@ if __name__ == "__main__":
     elif args.mode == "test":
         #########################################
         # this section is reserved for testing
-        start, end = "2023-04-25T10:00:00", "2023-04-30T10:10:00"
-        run_pipeline(start, end, make_backend(args.data_type, "target_init_license", "target_chgs"))
-
-        start, end = "2023-04-25T10:00:00", "2023-05-10T10:10:00"
+        # windows are on arrival time: re-read everything twice into separate targets
         test_backend = make_backend(args.data_type, "target1", "target2")
-        run_pipeline(start, end, test_backend)
+        run_pipeline("1970-01-01T00:00:00", None, test_backend)
+        run_pipeline("1970-01-01T00:00:00", None, test_backend)
         chck = test_backend.read_target("changed")
         assert len(chck["id"]) == len(chck["id"].unique())
