@@ -1,6 +1,8 @@
 
 # Data Incremental pipeline showcase
 
+![Pipeline overview: generate, validate, load, transform, incremental loads with watermarks](docs/pipeline_overview.gif)
+
 ## 📦  Project Overview
 
 This project simulates a full data lifecycle pipeline:
@@ -8,7 +10,7 @@ This project simulates a full data lifecycle pipeline:
 - 1. Synthetic data generation (license subscriptions)
 - 2. Data validation
 - 3. Data transformation (Python + SQL)
-- 4. Storage in SQLite database
+- 4. Storage in PostgreSQL database (pipeline watermarks in SQLite)
 - 5. Incremental pipeline processing
 - 6. Full Docker-based orchestration
 - 7. Automated testing suite (pytest)
@@ -16,8 +18,7 @@ This project simulates a full data lifecycle pipeline:
 ## 0. Installation 
 
 **Requirements**:
-- Linux OS 
-- Windows with WSL2 (Windows Subsystem Linux) activated
+- Linux OS or Windows with WSL2 (Windows Subsystem Linux) activated
 - Docker
 **(optional: docker installation)**
 If you want to run the whole pipeline through docker, you may need to install docker on your system.
@@ -112,7 +113,7 @@ An entrypoint file has been made in order to execute the different element of th
 - data transformation (python)
 - data transformation (SQL)
 
-## 5. Pipeline (not shipped in docker)
+## 5. Pipeline
 
 ### 5.1 Conception
 
