@@ -1,113 +1,135 @@
-import pandas as pd
-from unittest.mock import MagicMock
-import pytest
 import os
+from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+
 import app.validate_csv as m
 from app.validate_csv import (
-    rule_creation_date,
-    rule_non_duplicate_id,
-    rule_id_exist,
-    rule_type_ok,
-    rule_prices,
-
+    INITIAL_LICENSES_SCHEMA,
+    LICENSE_CHANGES_SCHEMA,
+    check_schema,
+    rule_change_after_creation,
+    rule_license_exists,
+    validate,
 )
 
 
-class TestRules:
-        # simple test for rules
-    def test_01_rule_creation_date(self):
-        df = pd.DataFrame({
-            "date": pd.to_datetime(["2024-01-10", "2024-02-01"]),
-            "creation_date": pd.to_datetime(["2024-01-01", "2024-02-05"]),
-        })
+def init_df(**overrides):
+    df = pd.DataFrame({
+        "id": [1, 2, 3],
+        "customer_id": [10, 11, 10],
+        "type": ["PASS", "SIM", "SUPERVISION"],
+        "creation_date": ["2024-01-01", "2024-01-05", "2024-02-01"],
+        "price": [100, 1000, 5000],
+        "renewable": [True, True, True],
+    })
+    for col, values in overrides.items():
+        df[col] = values
+    return df
 
-        result = rule_creation_date(df)
-        assert result.tolist() == [True, False]
 
-    def test_02_rule_non_duplicate_id(self):
-        df = pd.DataFrame({
-            "id": [1, 2, 2, 3]
-        })
+def changes_df(**overrides):
+    df = pd.DataFrame({
+        "id": [0, 1, 2],
+        "license_id": [1, 2, 3],
+        "date": ["2024-01-10", "2024-01-05", "2024-03-01"],
+        "price": [1000, 100, 5000],
+        "type": ["SIM", "PASS", "SUPERVISION"],
+        "renewable": [True, False, True],
+    })
+    for col, values in overrides.items():
+        df[col] = values
+    return df
 
-        result = rule_non_duplicate_id(df)
-        assert result.tolist() == [True, True, False, True]
 
-    def test_03_rule_id_exist(self):
-        chgd = pd.DataFrame({"id": [1, 2, 3, 4]})
-        init = pd.DataFrame({"license_id": [1, 3, 5]})
+def broken_rules(failures):
+    return {f["rule"] for f in failures}
 
-        result = rule_id_exist(chgd, init)
-        assert result.tolist() == [True, False, True, False]
 
-    def test_04_rule_type_ok(self):
-        df = pd.DataFrame({
-            "type": ["PASS", "SIM", "INVALID", "SUPERVISION"]
-        })
+class TestSchemas:
+    def test_01_valid_data_passes(self):
+        assert validate(init_df(), changes_df()) == []
 
-        result = rule_type_ok(df)
-        assert result.tolist() == [True, True, False, True]
+    def test_02_duplicated_id(self):
+        _, failures = check_schema(INITIAL_LICENSES_SCHEMA, init_df(id=[1, 2, 2]))
+        assert any(r.startswith("initial_licenses.id:") for r in broken_rules(failures))
 
-    def test_05_rule_prices(self):
-        df = pd.DataFrame({
-            "price": [-10, 0, 2500, 5000, 6000]
-        })
+    def test_03_invalid_type(self):
+        _, failures = check_schema(LICENSE_CHANGES_SCHEMA, changes_df(type=["SIM", "GOLD", "PASS"]))
+        assert failures[0]["rule"].startswith("license_changes.type: isin")
+        assert failures[0]["examples"] == ["GOLD"]
 
-        result = rule_prices(df)
-        assert result.tolist() == [False, True, True, True, False]
+    def test_04_price_out_of_range(self):
+        _, failures = check_schema(INITIAL_LICENSES_SCHEMA, init_df(price=[-10, 2500, 6000]))
+        assert failures[0]["rule"] == "initial_licenses.price: in_range(0, 5000)"
+        assert failures[0]["count"] == 2
+
+    def test_05_unparseable_date(self):
+        _, failures = check_schema(LICENSE_CHANGES_SCHEMA, changes_df(date=["2024-01-10", "not a date", "2024-03-01"]))
+        assert any(r.startswith("license_changes.date:") for r in broken_rules(failures))
+
+    def test_06_unexpected_or_missing_column(self):
+        _, failures = check_schema(INITIAL_LICENSES_SCHEMA, init_df().rename(columns={"renewable": "renew"}))
+        assert failures  # strict schema: renamed column is both unexpected and missing
+
+    def test_07_all_failures_reported_at_once(self):
+        failures = validate(init_df(id=[1, 1, 3], price=[100, 1000, 9999]), changes_df())
+        assert len(failures) == 2
+
+
+class TestCrossTableRules:
+    @staticmethod
+    def parsed(init, changes):
+        return INITIAL_LICENSES_SCHEMA.validate(init), LICENSE_CHANGES_SCHEMA.validate(changes)
+
+    def test_01_license_exists(self):
+        init, changes = self.parsed(init_df(), changes_df(license_id=[1, 4, 3]))
+        assert rule_license_exists(changes, init).tolist() == [True, False, True]
+
+    def test_02_change_after_creation(self):
+        # license 2 created 2024-01-05: a change on 2024-01-04 is invalid, on the same day is valid
+        init, changes = self.parsed(init_df(), changes_df(date=["2024-01-10", "2024-01-04", "2024-02-01"]))
+        assert rule_change_after_creation(changes, init).tolist() == [True, False, True]
+
+    def test_03_unknown_license_not_reported_twice(self):
+        init, changes = self.parsed(init_df(), changes_df(license_id=[1, 99, 3]))
+        assert rule_change_after_creation(changes, init).all()
+        assert broken_rules(validate(init_df(), changes_df(license_id=[1, 99, 3]))) == {"cross_table.license_exists"}
+
+    def test_04_skipped_when_schema_fails(self):
+        failures = validate(init_df(type=["PASS", "GOLD", "SIM"]), changes_df(license_id=[1, 99, 3]))
+        assert broken_rules(failures) == {"initial_licenses.type: isin(['PASS', 'SIM', 'SUPERVISION'])"}
 
 
 class TestMain:
-    # test validate main script
     @pytest.fixture
-    def mock_csv(self, monkeypatch):
-        # mocking pandas read_csv
-        created_df = pd.DataFrame({
-            "id": [1, 2],
-            "renew": [True, True],
-            "customer": ["A", "B"]
-        })
+    def folder(self, tmp_path):
+        return str(tmp_path)
 
-        changed_df = pd.DataFrame({
-            "license_id": [1, 2],
-            "customer_id": ["A", "B"],
-            "price": [10, 20]
-        })
-
-        def fake_read_csv(path, *args, **kwargs):
-            if "init" in path:
-                return created_df
-            if "changed" in path:
-                return changed_df
-            raise ValueError(f"Unexpected file: {path}")
-
-        monkeypatch.setattr(pd, "read_csv", fake_read_csv)
-
-        return created_df, changed_df
-
-    def setup_method(self):
-        """Runs before each test"""
+    @pytest.fixture(autouse=True)
+    def patch_logging(self, monkeypatch):
         self.mock_info = MagicMock()
         self.mock_warning = MagicMock()
-
-    def patch_logging(self, monkeypatch):
         monkeypatch.setattr(m.logger, "info", self.mock_info)
         monkeypatch.setattr(m.logger, "warning", self.mock_warning)
-    
-    def test_01_row_level_failure(self, monkeypatch, mock_csv):
 
-        self.patch_logging(monkeypatch)
+    def write(self, folder, init, changes):
+        init.to_csv(os.path.join(folder, "init.csv"), index=False)
+        changes.to_csv(os.path.join(folder, "changed.csv"), index=False)
 
-        # mocking rule functions
-        monkeypatch.setattr(
-            m,
-            "rule_creation_date",
-            lambda *a: pd.Series([True, False])
-        )
-        monkeypatch.setattr(m, "rule_non_duplicate_id", lambda *a: True)
-        monkeypatch.setattr(m, "rule_id_exist", lambda *a: pd.Series(4*[True]))
-        monkeypatch.setattr(m, "rule_type_ok", lambda *a: True)
-        monkeypatch.setattr(m, "rule_prices", lambda *a: False)
+    def test_01_valid_files(self, folder):
+        self.write(folder, init_df(), changes_df())
+        assert m.main("init.csv", "changed.csv", folder) is True
+        self.mock_warning.assert_not_called()
 
-        m.main("init.csv", "changed.csv", "csv")
+    def test_02_invalid_files_logged(self, folder):
+        self.write(folder, init_df(price=[100, 1000, 9999]), changes_df(license_id=[1, 2, 99]))
+        assert m.main("init.csv", "changed.csv", folder) is False
+        logged = " ".join(str(c.args[0]) for c in self.mock_warning.call_args_list)
+        assert "initial_licenses.price" in logged
+        assert "Validation FAILED" in logged
 
-        self.mock_warning.assert_called()
+    def test_03_generated_test_data_is_valid(self):
+        folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_csv")
+        assert m.main("test_initial_licenses.csv", "test_chg_license.csv", folder) is True
