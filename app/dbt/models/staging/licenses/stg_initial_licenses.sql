@@ -6,4 +6,4 @@ select
     renewable,
     price,
     type
-from initial_licenses 
+from {{ source('licenses', 'initial_licenses') }}
