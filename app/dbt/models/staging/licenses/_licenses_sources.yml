@@ -1,0 +1,81 @@
+version: 2
+
+# Raw tables loaded by app/add_database.py.
+# The tests mirror the Pandera rules of app/validate_csv.py, so the same
+# contract is checked on the CSVs (before loading) and in the database.
+sources:
+  - name: licenses
+    schema: "{{ target.schema }}"
+    tables:
+      - name: initial_licenses
+        description: One row per license, in its state at creation.
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+          - name: customer_id
+            data_tests:
+              - not_null
+          - name: type
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: ['PASS', 'SIM', 'SUPERVISION']
+          - name: creation_date
+            data_tests:
+              - not_null
+          - name: price
+            data_tests:
+              - not_null
+              - value_between:
+                  arguments:
+                    min_value: 0
+                    max_value: 5000
+          - name: renewable
+            data_tests:
+              - not_null
+          - name: ingested_at
+            data_tests:
+              - not_null
+
+      - name: license_changes
+        description: One row per license change event.
+        columns:
+          - name: id
+            data_tests:
+              - unique
+              - not_null
+          - name: license_id
+            data_tests:
+              - not_null
+              # every change points to a known license
+              - relationships:
+                  arguments:
+                    to: source('licenses', 'initial_licenses')
+                    field: id
+          - name: date
+            data_tests:
+              - not_null
+          - name: price
+            data_tests:
+              - not_null
+              - value_between:
+                  arguments:
+                    min_value: 0
+                    max_value: 5000
+          - name: type
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: ['PASS', 'SIM', 'SUPERVISION']
+          - name: renewable
+            data_tests:
+              - not_null
+          - name: ingested_at
+            data_tests:
+              - not_null
+# "no change before the license's creation" spans both tables:
+# see tests/assert_change_after_creation.sql
