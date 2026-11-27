@@ -13,10 +13,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
-COPY app/ /app/app
+# Copy app, owned by the uid the compose services run as (user: "1000:1000"),
+# so the pipeline can write state.db, dbt target/ and logs/ inside /app/app
+COPY --chown=1000:1000 app/ /app/app
 
 # Data directory
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown 1000:1000 /app/data
 
 ENV PYTHONPATH=/app

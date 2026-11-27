@@ -39,7 +39,7 @@ services:
       additional_contexts:
         pipeline-base: service:base
     container_name: data_pipeline
-    
+    user: "1000:1000"
 
     depends_on:
       db:
@@ -55,7 +55,8 @@ services:
     env_file:
       - ./app/config/.env.postgre
     volumes:
-      - ./app/csv:/app/src
+      # host app/csv <-> container PROJECT_ROOT/csv (code lives in /app/app)
+      - ./app/csv:/app/app/csv
 
     restart: "no"
 
@@ -67,7 +68,7 @@ services:
         pipeline-base: service:base
 
     container_name: incr_pipeline
-
+    user: "1000:1000"
     depends_on:
       db:
         condition: service_healthy
@@ -82,7 +83,8 @@ services:
     env_file:
       - ./app/config/.env.postgre
     volumes:
-      - ./app/csv:/app/src
+      # host app/csv <-> container PROJECT_ROOT/csv (code lives in /app/app)
+      - ./app/csv:/app/app/csv
 
     restart: "no"
 
