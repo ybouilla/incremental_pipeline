@@ -11,11 +11,13 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 
-# Copy app, owned by the compose user (1000:1000) so state.db can be written
-COPY --chown=1000:1000 app/ /app/app
+# Copy app, owned by the compose user (HOST_UID/HOST_GID, default 1000) so state.db can be written
+ARG APP_UID=1000
+ARG APP_GID=1000
+COPY --chown=${APP_UID}:${APP_GID} app/ /app/app
 
 # Optional data dir
-RUN mkdir -p /app/data && chown 1000:1000 /app/data
+RUN mkdir -p /app/data && chown ${APP_UID}:${APP_GID} /app/data
 
 ENV PYTHONPATH=/app
 

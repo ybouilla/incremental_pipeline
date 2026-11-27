@@ -93,7 +93,12 @@ To run the one-shot data pipeline with Docker compose (PostgreSQL + pipeline con
 docker compose build base
 docker compose up --build --abort-on-container-exit --exit-code-from pipeline
 ```
-The pipeline containers mount the local `app/csv` folder, so generated data, transformed data and logs end up there. They run as user `1000:1000` (the default first user on Linux/WSL), so the files belong to you; if your user id differs (`id -u`), change `user:` in `docker-compose.yml` and the `--chown` in the Dockerfiles.
+The pipeline containers mount the local `app/csv` folder, so generated data, transformed data and logs end up there. They run as user `1000:1000` by default (the first user on Linux/WSL), so the files belong to you. If your user id differs, run compose with your own ids, which also go into the image builds:
+```shell
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose build base
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up --build --abort-on-container-exit --exit-code-from pipeline
+```
+The CI does this, since the GitHub runner user is not 1000.
 
 To run the pipeline image alone and keep its data and logs, build it, then mount a local folder:
 ```shell
