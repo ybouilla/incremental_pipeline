@@ -58,6 +58,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Run containers as the runner user (owner of the checked-out app/csv)
+      run: |
+        echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV"
+        echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
     - name: Verify Docker
       run: |
           docker --version
@@ -96,6 +100,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Run containers as the runner user (owner of the checked-out app/csv)
+      run: |
+        echo "HOST_UID=$(id -u)" >> "$GITHUB_ENV"
+        echo "HOST_GID=$(id -g)" >> "$GITHUB_ENV"
     - name: Verify Docker
       run: |
           docker --version

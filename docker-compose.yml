@@ -30,6 +30,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.base
+      args:
+        APP_UID: ${HOST_UID:-1000}
+        APP_GID: ${HOST_GID:-1000}
     image: pipeline-base:latest
 
   pipeline:
@@ -39,7 +42,8 @@ services:
       additional_contexts:
         pipeline-base: service:base
     container_name: data_pipeline
-    
+    # same uid as the owner of the mounted ./app/csv (CI sets HOST_UID/HOST_GID to the runner's)
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
 
     depends_on:
       db:
@@ -55,7 +59,8 @@ services:
     env_file:
       - ./app/config/.env.postgre
     volumes:
-      - ./app/csv:/app/src
+      # host app/csv <-> container PROJECT_ROOT/csv (code lives in /app/app)
+      - ./app/csv:/app/app/csv
 
     restart: "no"
 
@@ -65,9 +70,12 @@ services:
       dockerfile: Dockerfile.pip
       additional_contexts:
         pipeline-base: service:base
+      args:
+        APP_UID: ${HOST_UID:-1000}
+        APP_GID: ${HOST_GID:-1000}
 
     container_name: incr_pipeline
-
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
       db:
         condition: service_healthy
@@ -82,7 +90,8 @@ services:
     env_file:
       - ./app/config/.env.postgre
     volumes:
-      - ./app/csv:/app/src
+      # host app/csv <-> container PROJECT_ROOT/csv (code lives in /app/app)
+      - ./app/csv:/app/app/csv
 
     restart: "no"
 
